@@ -1,0 +1,13 @@
+# Exact versions used to train artifacts/model.joblib. The model is a pickle:
+# serve it with the same scikit-learn / lightgbm versions or retrain.
+numpy==2.5.3
+pandas==3.0.6
+scipy==1.18.1
+scikit-learn==1.9.1
+lightgbm==4.7.0
+joblib==1.6.0
+PyYAML==6.0.3
+matplotlib==3.11.2
+fastapi==0.141.1
+uvicorn==0.53.0
+pydantic==2.13.5

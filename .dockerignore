@@ -1,0 +1,9 @@
+.venv
+.git
+**/__pycache__
+*.egg-info
+.pytest_cache
+notebooks
+tests
+artifacts/reports
+artifacts/forecast_*.csv

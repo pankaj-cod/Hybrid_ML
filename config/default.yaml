@@ -1,0 +1,38 @@
+# Default training / evaluation configuration.
+data:
+  path: data/raw/PJME_hourly.csv
+  timestamp_col: Datetime
+  target_col: PJME_MW
+  max_interpolate_hours: 6       # longer gaps are an error, not silently filled
+
+split:
+  # Chronological split. The test period is only touched once, for the final report.
+  val_start: "2015-01-01"        # train: everything before this
+  test_start: "2017-01-01"       # validation: [val_start, test_start); test: [test_start, end]
+
+forecast:
+  horizon: 24                    # hours ahead produced by `pjme forecast`
+  eval_origin_hour: 0            # day-ahead backtest issues one forecast per day at this hour
+
+lightgbm:
+  learning_rate: 0.03
+  num_leaves: 63
+  min_child_samples: 30
+  subsample: 0.8
+  subsample_freq: 1
+  colsample_bytree: 0.8
+  reg_lambda: 1.0
+  n_estimators: 5000             # upper bound, early stopping picks the real number
+  early_stopping_rounds: 200
+  random_state: 42
+
+base_model:
+  fourier_order: 3               # annual harmonics, each interacted with hour of day
+  ridge_alpha: 1.0
+  include_trend: true
+
+# Model that is refit on the full history and saved for serving.
+production_model: hybrid
+
+output:
+  artifacts_dir: artifacts
