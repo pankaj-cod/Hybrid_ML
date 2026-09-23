@@ -24,7 +24,7 @@ from .features import LOOKBACK
 from .pipeline import load_bundle
 
 MAX_HORIZON = 168
-log = logging.getLogger(__name__)
+log = logging.getLogger("uvicorn.error")  # shows up in uvicorn / Render logs
 
 
 class Observation(BaseModel):

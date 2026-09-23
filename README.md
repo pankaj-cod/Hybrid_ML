@@ -110,6 +110,11 @@ model.forecast(history_series, horizon=24)   # history: hourly pd.Series, >= 168
 Tests: `.venv/bin/python -m pytest` (23 tests; they cover leakage, train/serve parity,
 drift absorption, save/load, CLI, and the API; runtime is a few seconds).
 
+## Deployment
+
+Step-by-step Render guide: [docs/DEPLOY_RENDER.md](docs/DEPLOY_RENDER.md). The container is built
+from `Dockerfile`, and CI builds and smoke-tests it on every push.
+
 ## Configuration
 
 `config/default.yaml` holds the split dates, LightGBM params, base-model terms, horizon,
