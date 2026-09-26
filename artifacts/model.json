@@ -1,60 +1,124 @@
 {
   "package_version": "1.0.0",
-  "created_at": "2026-09-23T19:18:43+00:00",
+  "created_at": "2026-09-26T06:46:55+00:00",
   "python": "3.12.13",
-  "model_kind": "hybrid",
+  "model_kind": "ensemble_bc",
   "model": {
-    "name": "hybrid",
-    "class": "RecursiveForecaster",
-    "regressor": "lightgbm",
-    "hybrid": true,
-    "n_estimators": 3470,
-    "features": [
-      "hour",
-      "dayofweek",
-      "month",
-      "dayofyear",
-      "weekofyear",
-      "quarter",
-      "is_weekend",
-      "is_holiday",
-      "is_holiday_adjacent",
-      "lag_1",
-      "lag_2",
-      "lag_3",
-      "lag_6",
-      "lag_12",
-      "lag_24",
-      "lag_48",
-      "lag_72",
-      "lag_168",
-      "roll_mean_24",
-      "roll_std_24",
-      "roll_min_24",
-      "roll_max_24",
-      "roll_mean_168",
-      "base"
-    ],
-    "trained_range": [
-      "2002-01-01 01:00:00",
-      "2018-08-03 00:00:00"
-    ],
-    "lightgbm_params": {
-      "learning_rate": 0.03,
-      "num_leaves": 63,
-      "min_child_samples": 30,
-      "subsample": 0.8,
-      "subsample_freq": 1,
-      "colsample_bytree": 0.8,
-      "reg_lambda": 1.0,
-      "n_estimators": 5000,
-      "random_state": 42
+    "name": "ensemble_bc",
+    "class": "BiasCorrected",
+    "inner": {
+      "name": "ensemble",
+      "class": "EnsembleForecaster",
+      "weights": [
+        0.5,
+        0.5
+      ],
+      "members": [
+        {
+          "name": "lightgbm",
+          "class": "RecursiveForecaster",
+          "regressor": "lightgbm",
+          "hybrid": false,
+          "n_estimators": 4998,
+          "features": [
+            "hour",
+            "dayofweek",
+            "month",
+            "dayofyear",
+            "weekofyear",
+            "quarter",
+            "is_weekend",
+            "is_holiday",
+            "is_holiday_adjacent",
+            "lag_1",
+            "lag_2",
+            "lag_3",
+            "lag_6",
+            "lag_12",
+            "lag_24",
+            "lag_48",
+            "lag_72",
+            "lag_168",
+            "roll_mean_24",
+            "roll_std_24",
+            "roll_min_24",
+            "roll_max_24",
+            "roll_mean_168"
+          ],
+          "trained_range": [
+            "2002-01-01 01:00:00",
+            "2018-08-03 00:00:00"
+          ],
+          "lightgbm_params": {
+            "learning_rate": 0.03,
+            "num_leaves": 63,
+            "min_child_samples": 30,
+            "subsample": 0.8,
+            "subsample_freq": 1,
+            "colsample_bytree": 0.8,
+            "reg_lambda": 1.0,
+            "n_estimators": 5000,
+            "random_state": 42
+          },
+          "base_model": null
+        },
+        {
+          "name": "hybrid",
+          "class": "RecursiveForecaster",
+          "regressor": "lightgbm",
+          "hybrid": true,
+          "n_estimators": 3470,
+          "features": [
+            "hour",
+            "dayofweek",
+            "month",
+            "dayofyear",
+            "weekofyear",
+            "quarter",
+            "is_weekend",
+            "is_holiday",
+            "is_holiday_adjacent",
+            "lag_1",
+            "lag_2",
+            "lag_3",
+            "lag_6",
+            "lag_12",
+            "lag_24",
+            "lag_48",
+            "lag_72",
+            "lag_168",
+            "roll_mean_24",
+            "roll_std_24",
+            "roll_min_24",
+            "roll_max_24",
+            "roll_mean_168",
+            "base"
+          ],
+          "trained_range": [
+            "2002-01-01 01:00:00",
+            "2018-08-03 00:00:00"
+          ],
+          "lightgbm_params": {
+            "learning_rate": 0.03,
+            "num_leaves": 63,
+            "min_child_samples": 30,
+            "subsample": 0.8,
+            "subsample_freq": 1,
+            "colsample_bytree": 0.8,
+            "reg_lambda": 1.0,
+            "n_estimators": 5000,
+            "random_state": 42
+          },
+          "base_model": {
+            "fourier_order": 3,
+            "ridge_alpha": 1.0,
+            "include_trend": true
+          }
+        }
+      ]
     },
-    "base_model": {
-      "fourier_order": 3,
-      "ridge_alpha": 1.0,
-      "include_trend": true
-    }
+    "bias_table_steps": 24,
+    "mean_abs_offset_mw": 299.7550998137277
   },
   "trained_on": [
     "2002-01-01 01:00:00",
@@ -64,16 +128,16 @@
   "default_horizon": 24,
   "target": "PJME_MW",
   "test_metrics": {
-    "1h_MAE": 195.38785635715567,
-    "1h_RMSE": 281.9647258680933,
-    "1h_MAPE": 0.612688296658077,
-    "1h_R2": 0.9978798235061334,
-    "1h_bias": 9.759490017169199,
-    "day_ahead_MAE": 1328.9386821981768,
-    "day_ahead_RMSE": 2018.328415060916,
-    "day_ahead_MAPE": 4.080453412591494,
-    "day_ahead_R2": 0.8913696629962956,
-    "day_ahead_bias": 257.50129257909924,
+    "1h_MAE": 173.52175423769143,
+    "1h_RMSE": 245.184489156976,
+    "1h_MAPE": 0.5428822751342157,
+    "1h_R2": 0.9983968711190553,
+    "1h_bias": -0.6948866209701811,
+    "day_ahead_MAE": 1241.304636183141,
+    "day_ahead_RMSE": 1923.8927146064084,
+    "day_ahead_MAPE": 3.769326511416405,
+    "day_ahead_R2": 0.9012972715647792,
+    "day_ahead_bias": 99.98978118947248,
     "n_one_step": 13897.0,
     "n_day_ahead_origins": 579.0
   },
