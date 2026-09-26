@@ -5,11 +5,12 @@ and deploys it as a live web API on [Render](https://render.com) (free tier).
 Total time is about 10 minutes, and most of that is waiting for the first build.
 
 **What gets deployed:** the Docker image defined in `Dockerfile`. It serves the trained
-hybrid model (`artifacts/model.joblib`) through FastAPI. The server loads the saved model
+production model (`artifacts/model.joblib`, a bias-corrected LightGBM + hybrid ensemble) through FastAPI. The server loads the saved model
 and does **not** retrain.
 
 | Endpoint | What it does |
 |---|---|
+| `GET /dashboard` | Interactive dashboard (results, backtest explorer, live forecast) |
 | `GET /` | Service info |
 | `GET /health` | Model status, training range and test metrics |
 | `GET /docs` | Interactive API page (try requests in the browser) |
@@ -20,12 +21,13 @@ and does **not** retrain.
 
 ## 0. Before you start (checklist)
 
-- [ ] The code is on GitHub on branch `main`. It is: commit `eb8d591`.
+- [ ] The code is on GitHub on branch `main`.
 - [ ] CI is green. Check the **Actions** tab on GitHub; both the `test` and `docker` jobs
       should show ✅. The `docker` job builds and starts this exact container, so a
       green CI means the image works on Linux.
-- [ ] These files are in the repo root: `Dockerfile`, `render.yaml`, `requirements.txt`,
-      `artifacts/model.joblib`.
+- [ ] These files are in the repo: `Dockerfile`, `render.yaml`, `requirements.txt`,
+      `artifacts/model.joblib`, `artifacts/reports/metrics.json`,
+      `artifacts/reports/backtest_day_ahead.csv` (the last two feed the dashboard).
 
 You do **not** need Docker installed on your computer. Render builds the image itself.
 
@@ -96,7 +98,7 @@ You don't need to set any environment variables. `PORT`, `PJME_MODEL_PATH` and
    #8 RUN pip install --no-cache-dir -r requirements.txt
    ...
    ==> Deploying...
-   INFO:     Loaded hybrid model trained on ['2002-01-01 01:00:00', '2018-08-03 00:00:00']
+   INFO:     Loaded ensemble_bc model trained on ['2002-01-01 01:00:00', '2018-08-03 00:00:00']
    INFO:     Uvicorn running on http://0.0.0.0:10000
    ==> Your service is live 🎉
    ```
@@ -113,6 +115,7 @@ If the build fails, go to **Troubleshooting** below.
 Replace `URL` with your service URL.
 
 ### In the browser
+- `URL/dashboard` opens the interactive dashboard. This is the link to share (e.g. on your CV).
 - `URL/health` shows JSON with `"status": "ok"` and the model's test metrics.
 - `URL/docs` opens an interactive page. Click an endpoint → **Try it out** → **Execute**.
 - `URL/forecast/latest?horizon=24` returns 24 hourly forecasts.
@@ -194,7 +197,7 @@ git add artifacts config && git commit -m "Retrain model" && git push
 | Thing | Free tier |
 |---|---|
 | Sleep | The service **spins down after ~15 min without traffic**. The next request wakes it and takes about **30–60 s**. Later requests are fast. |
-| Resources | 512 MB RAM, shared CPU. That's enough for this API. |
+| Resources | 512 MB RAM, shared CPU. The API peaks at about 320 MB (measured with every endpoint exercised), so it fits. |
 | Hours | Free instance hours are capped per month. One always-on service fits. |
 | Custom domain | Supported: **Settings → Custom Domains**. |
 

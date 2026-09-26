@@ -1,148 +1,183 @@
-# PJME Hourly Load Forecasting: Hybrid Model
+# Hybrid ML: Hourly Electricity Demand Forecasting (PJM East)
 
-Forecasts hourly electricity demand for PJM East (`PJME_hourly.csv`, 2002–2018) with a
-**hybrid model**: a seasonal linear base plus LightGBM on the residual. It is evaluated
-against naive, linear, and direct LightGBM baselines on a held-out test period.
+[![CI](https://github.com/pankaj-cod/Hybrid_ML/actions/workflows/ci.yml/badge.svg)](https://github.com/pankaj-cod/Hybrid_ML/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![LightGBM](https://img.shields.io/badge/model-LightGBM%20%2B%20Ridge-orange)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688)
 
-## Results (test set: 2017-01-01 → 2018-08-03, never used for fitting or tuning)
+Forecasts the next 24 hours of electricity demand for the PJM East grid region from 16 years
+of hourly load data. A **hybrid model** (a seasonal linear base with LightGBM learning the
+residual) is ensembled with a direct LightGBM model and bias-corrected. It's served as a
+FastAPI service with an interactive dashboard, tested, containerised, and CI-checked.
 
-| Model | 1-hour-ahead MAE | Day-ahead MAE | Day-ahead MAPE | Day-ahead R² |
+**Live demo:** _add your Render URL here after deploying ([guide](docs/DEPLOY_RENDER.md))_ · `/dashboard` · `/docs`
+
+![Dashboard](docs/images/dashboard.png)
+
+---
+
+## Results
+
+Held-out **test period: 1 Jan 2017 → 3 Aug 2018** (19 months, 579 day-ahead forecasts). It was
+never used for training, early stopping or tuning, and was scored once at the end.
+
+| Model | 1-hour-ahead MAE | **Day-ahead MAE** | Day-ahead MAPE | Day-ahead R² |
 |---|---|---|---|---|
-| Naive (same hour yesterday) | 2,300 MW | 2,300 MW | 7.32 % | 0.74 |
-| Linear regression on lags | 386 MW | 2,033 MW | 6.48 % | 0.80 |
-| LightGBM (direct "tree model") | 210 MW | 1,382 MW | 4.23 % | 0.886 |
-| **Hybrid (seasonal base + LightGBM residual)** | **195 MW** | **1,329 MW** | **4.08 %** | **0.891** |
-| Ensemble (mean of LightGBM + hybrid) | 187 MW | 1,311 MW | 4.01 % | 0.896 |
+| Naive (same hour yesterday) | 2,300 MW | 2,300 MW | 7.32 % | 0.738 |
+| Linear regression on lags | 386 MW | 2,033 MW | 6.48 % | 0.797 |
+| LightGBM (direct) | 210 MW | 1,382 MW | 4.23 % | 0.886 |
+| Hybrid (seasonal base + LightGBM residual) | 195 MW | 1,329 MW | 4.08 % | 0.891 |
+| Hybrid + bias correction | 182 MW | 1,243 MW | 3.77 % | 0.898 |
+| **Ensemble + bias correction (production)** | **174 MW** | **1,241 MW** | **3.77 %** | **0.901** |
 
-*Day-ahead* means one forecast every midnight for the next 24 hours, produced recursively
-(each prediction feeds the next hour's lags), which is how the model runs in production.
-The hybrid beats the direct tree model by about 7 % at 1 hour and 4 % day-ahead.
-Full tables and plots are written to `artifacts/reports/` by `pjme train`.
+- **Day-ahead** = one forecast issued every midnight for the next 24 hours, produced
+  recursively (each prediction feeds the next hour's inputs). This is how the model is used,
+  so it's the headline metric. 1-hour-ahead scores are shown for reference only.
+- Production model: **96.2 % day-ahead accuracy (MAPE 3.77 %)**. It's 10 % more accurate than
+  LightGBM alone and 44 % more accurate than naive persistence. The median test day has 3.1 % error.
+- Remaining error is dominated by sudden weather changes (e.g. a heat wave ending overnight),
+  which no load-only model can anticipate. See [Limitations](#limitations-and-next-steps).
 
-## What was wrong with the original hybrid (`notebooks/00_original_exploration.ipynb`)
+---
 
-1. **The residual model worked in the wrong space.** It was trained to predict
-   `y − trend`, but its lag features were lags of raw `y`, and it never saw the trend.
-   So any error in the extrapolated trend passed 1:1 into the final forecast. That is
-   why folds 1–2 had MAE of about 1,000–1,500 MW. **Fix:** lags and rolling statistics
-   are computed on the *residual* series (and the base value is passed as a feature).
-   If the base drifts by +c, the residual lags shift by −c and cancel it. Measured on the
-   trained model, an injected +1,000 MW base error moves the forecast by only about 16 MW.
-   Re-running the old design on the same split gives 1-hour MAE ≈ 500 MW, versus 195 for the fix.
-2. **The multi-scale "trend" targets were features.** `trend_24` was
-   `shift(1).rolling(24).mean()`, which is exactly the `rolling_mean_24` feature, so the
-   "trend models" learned an identity mapping (MAE 26). The trend weights were then
-   fitted on out-of-fold predictions but replaced by hard-coded 0.4/0.35/0.25 at inference.
-3. **Train/serve skew.** Several forecast cells froze all lag features at the last
-   observed value (`create_future_features`), so every hour of the 24-hour forecast saw
-   the same `lag_1`.
-4. **The "final test" compared against the wrong day.** The forecast for
-   2018-08-03 01:00 → 08-04 00:00 was scored against actuals for 08-02 01:00 → 08-03 00:00.
-   That, plus (3), produced the MAE ≈ 6,300 MW and R² < 0 in the last cells.
-5. **Optimistic evaluation.** Hyper-parameters were searched on the same CV folds used
-   to report scores, and all scores were one-step-ahead (lag_1 known). The recursive
-   24-hour forecast that was actually being used was never backtested.
+## The story: fixing a hybrid that lost to a plain tree model
 
-## Method
+The first version (`notebooks/00_original_exploration.ipynb`) had a hybrid that performed
+**worse** than plain LightGBM on test data: MAE ≈ 820 MW vs 232 MW, and later R² < 0.
+Diagnosis and fixes:
+
+| Problem found | Fix |
+|---|---|
+| The residual model predicted `y − trend` but used lags of **raw** `y`, so any trend-extrapolation error passed 1:1 into the forecast | Lags and rolling stats are computed on the **residual** series. A +1,000 MW error injected into the base now moves the forecast by just **16 MW** |
+| Multi-scale "trend" targets were identical to existing features (`trend_24` == `rolling_mean_24`) | Replaced with a deterministic seasonal base (known for any future hour) |
+| Forecast features froze every lag at the last observed value (train/serve skew) | One shared feature function for training and every recursive step, enforced by a test |
+| The "final test" scored a forecast against the **previous** day's actuals | Proper chronological train / validation / test split and a day-ahead backtest |
+| Tuned and reported on the same folds; only 1-step-ahead scores | Tuning on validation only; the test set is scored once |
+
+Re-running the original design on the same split gives 1-hour MAE ≈ 500 MW; the fixed hybrid gets 195 MW.
+
+### Squeezing out more accuracy (no new data)
+
+All choices were made on the **2015–16 validation years**:
+
+| Tried (validation day-ahead MAE) | Outcome |
+|---|---|
+| Extra holidays (Good Friday, Christmas week, NYE) | slightly worse → dropped |
+| L1 / Huber loss | no gain → dropped |
+| 16-trial hyperparameter search, higher tree cap | within noise → defaults kept |
+| **Per-hour bias correction** (learned on 2015, checked on 2016) | −3 % to −6.5 % → **kept** |
+| **50/50 LightGBM + hybrid ensemble** | −4 % → **kept** |
+
+Combined, these gave −11 % on validation and **−6.6 % on test** vs the hybrid alone.
+
+---
+
+## How it works
 
 ```
 y(t) = base(t) + z(t)
-base(t): Ridge on deterministic terms: 168 hour-of-week dummies, annual Fourier
-         terms (k=1..3) × hour-of-day, US federal holidays (+ adjacent days) × hour,
-         linear trend. Needs no load data, so it is known for any future hour.
-z(t):    LightGBM on calendar features + lags {1,2,3,6,12,24,48,72,168} and rolling
-         24h/168h stats *of z*, plus base(t).
+
+base(t)  Ridge regression on deterministic terms: 168 hour-of-week dummies, annual
+         Fourier terms (k = 1..3) × hour of day, US federal holidays (+ adjacent days)
+         × hour, linear trend. Uses no load data, so it's known for any future hour.
+z(t)     LightGBM on calendar features + lags {1,2,3,6,12,24,48,72,168} and rolling
+         24 h / 168 h statistics *of z*, plus base(t).
+
+production(t) = 0.5 · LightGBM(t) + 0.5 · hybrid(t) − bias[origin hour, step]
+
+bias     24 × 24 table of mean (forecast − actual) on validation, measured before the
+         final refit, so it's out-of-sample.
 ```
 
-* **Split:** train 2002–2014 · validation 2015–2016 (early stopping) · test 2017–2018-08.
-  After early stopping, models are refit on train+val with the chosen tree count, then
-  scored once on test. The production model is refit on all data.
-* **One feature code path.** `features.window_features` builds features from the 168
-  values before the target, both for training and for each recursive step. A test
-  asserts that the first recursive step equals the teacher-forced prediction exactly.
-* **Data cleaning:** DST duplicate hours are averaged, and missing hours are
-  time-interpolated only for gaps of 6 h or less (longer gaps raise an error).
-  Implausible values are treated as missing.
-* **Guard:** the base model drops annual/trend terms when trained on less than 2 years
-  of data, because they extrapolate badly from short windows.
+- **Split:** train 2002–2014 · validation 2015–2016 (early stopping, tuning, bias tables) ·
+  test 2017–2018. Models are refit on train+val for the test score and on all data for production.
+- **Data cleaning:** DST duplicate hours are averaged. Gaps of 6 h or less are
+  time-interpolated; longer gaps raise an error instead of being silently filled.
+- **Safeguards:** tests assert that features use only past values, that recursive and
+  one-step features match exactly, that base drift is absorbed, and that the bias correction
+  recovers a planted error pattern. The base model drops annual/trend terms when trained on
+  less than 2 years of data.
 
-## Usage
+---
+
+## Quickstart
 
 ```bash
-uv venv .venv --python 3.12 && uv pip install --python .venv/bin/python -e ".[serve,dev]"
-# macOS only: LightGBM needs OpenMP ->  brew install libomp
+git clone https://github.com/pankaj-cod/Hybrid_ML.git && cd Hybrid_ML
+uv venv .venv --python 3.12            # or: python3.12 -m venv .venv
+uv pip install --python .venv/bin/python -e ".[serve,dev]"
+brew install libomp                    # macOS only (OpenMP for LightGBM)
 ```
 
-Train, evaluate, and save the production model (about 2–3 min on a laptop):
+| Task | Command |
+|---|---|
+| **Run the dashboard + API** | `.venv/bin/pjme serve` → open <http://127.0.0.1:8000/dashboard> |
+| Forecast the next 24 h after a CSV | `.venv/bin/pjme forecast --history data/raw/PJME_hourly.csv --horizon 24` |
+| Retrain + re-evaluate (≈ 8 min) | `.venv/bin/pjme train` |
+| Run the tests (26, a few seconds) | `.venv/bin/python -m pytest -q` |
 
-```bash
-.venv/bin/pjme train                      # uses config/default.yaml
-```
+A trained model is included in `artifacts/`, so `serve` and `forecast` work straight after cloning.
 
-Outputs are written to `artifacts/`: `model.joblib` and `model.json` (metadata and test
-metrics), and `reports/metrics.{md,json}` with `mae_by_horizon.png`, `test_week.png`, and
-`mae_by_month.png`.
+### API
 
-Forecast the 24 hours after the end of any history CSV (same columns as the training data,
-at least 168 h of it):
-
-```bash
-.venv/bin/pjme forecast --history data/raw/PJME_hourly.csv --horizon 24 --output forecast.csv
-```
-
-The output has `forecast` plus the `base` and `residual` components.
-
-HTTP API (optional):
-
-```bash
-PJME_MODEL_PATH=artifacts/model.joblib .venv/bin/uvicorn pjme_forecast.service:app --port 8000
-# GET /health    POST /forecast  {"history":[{"timestamp":"2018-07-27T01:00","value":31000}, ...], "horizon":24}
-```
-
-Python:
+| Endpoint | Description |
+|---|---|
+| `GET /dashboard` | Interactive dashboard |
+| `GET /health` | Model info and test metrics |
+| `POST /forecast` | Forecast from your own history: `{"history":[{"timestamp":"2018-07-27T01:00","value":31000}, …], "horizon":24}` (≥ 168 hourly points) |
+| `GET /forecast/latest?horizon=24` | Forecast after the end of the bundled dataset |
+| `GET /api/summary`, `/api/backtest?day=YYYY-MM-DD`, `/api/backtest/daily`, `/api/forecast` | Data behind the dashboard |
+| `GET /docs` | Interactive OpenAPI docs |
 
 ```python
 from pjme_forecast.pipeline import load_bundle
 model, meta = load_bundle("artifacts/model.joblib")
-model.forecast(history_series, horizon=24)   # history: hourly pd.Series, >= 168 h
+model.forecast(history, horizon=24)    # history: hourly pd.Series with >= 168 points
 ```
 
-Tests: `.venv/bin/python -m pytest` (23 tests; they cover leakage, train/serve parity,
-drift absorption, save/load, CLI, and the API; runtime is a few seconds).
+---
 
 ## Deployment
 
-Step-by-step Render guide: [docs/DEPLOY_RENDER.md](docs/DEPLOY_RENDER.md). The container is built
-from `Dockerfile`, and CI builds and smoke-tests it on every push.
+Docker image + Render blueprint included. Step-by-step: **[docs/DEPLOY_RENDER.md](docs/DEPLOY_RENDER.md)**.
+Every push to `main` runs the tests, builds the Docker image, and smoke-tests the running
+container in GitHub Actions. Render redeploys automatically.
 
-## Configuration
+---
 
-`config/default.yaml` holds the split dates, LightGBM params, base-model terms, horizon,
-and `production_model` (`hybrid` by default; set it to `ensemble` for the most accurate
-option, or to `lightgbm`).
-
-## Layout
+## Project structure
 
 ```
-config/default.yaml         settings
-data/raw/PJME_hourly.csv    dataset
+config/default.yaml          all settings (split dates, LightGBM params, production model)
+data/raw/PJME_hourly.csv     dataset (PJM East hourly load, 2002-2018)
+artifacts/                   trained model bundle + evaluation reports
 src/pjme_forecast/
-  data.py        load, clean, validate, split
-  features.py    calendar/holiday, lag & rolling features, base-model design matrix
-  models.py      SeasonalBase, RecursiveForecaster (direct / hybrid), naive, ensemble
-  evaluation.py  metrics, 1h + day-ahead backtests, plots
-  pipeline.py    train → evaluate → refit → save bundle
-  cli.py         `pjme train`, `pjme forecast`
-  service.py     FastAPI app
-tests/                      pytest suite (synthetic data, fast)
-notebooks/                  original exploration + results notebook
+  data.py                    load, clean, validate, split
+  features.py                calendar/holiday, lag & rolling features, base design matrix
+  models.py                  SeasonalBase, RecursiveForecaster (direct/hybrid),
+                             EnsembleForecaster, BiasCorrected, naive baselines
+  evaluation.py              metrics, 1 h + day-ahead backtests, plots
+  pipeline.py                train → evaluate → refit → save
+  cli.py                     `pjme train | forecast | serve`
+  service.py, dashboard.py   FastAPI app and dashboard endpoints
+  static/dashboard.html      dashboard (plain HTML/SVG, no external dependencies)
+tests/                       pytest suite on synthetic data
+notebooks/                   original exploration (v1) + results notebook
+docs/                        deployment guide, images
+Dockerfile, render.yaml, .github/workflows/ci.yml
 ```
+
+---
 
 ## Limitations and next steps
 
-* **No weather data.** PJM load is driven mostly by temperature. Day-ahead error is
-  largest for the afternoon/evening peak hours and in summer/winter extremes (see
-  `mae_by_horizon.png`, `mae_by_month.png`). Adding temperature
-  forecasts as features is the biggest remaining improvement available.
-* Forecasts are point estimates. Quantile LightGBM models would add prediction intervals.
-* Model bundles are pickles (joblib). Only load bundles you created yourself.
+- **No weather data.** Temperature drives most of PJM load. Day-ahead error is largest at the
+  afternoon peak and in extreme summer/winter months. The hardest test day (20 May 2017, a heat
+  wave ending overnight) is missed by every model. **Adding temperature forecasts is the
+  biggest improvement available.**
+- Point forecasts only. Quantile LightGBM would add prediction intervals.
+- The dataset ends in August 2018, so the "live" forecast is a demo. Send recent data to `POST /forecast` for real use.
+- Model bundles are pickles (joblib): load only bundles you created, with the pinned library
+  versions in `requirements.txt`.
+
+**Tech stack:** Python 3.12 · pandas · scikit-learn · LightGBM · FastAPI · Docker · GitHub Actions · Render
