@@ -97,6 +97,20 @@ def mae_by_month(results: list[BacktestResult]) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
+def backtest_frame(results: list[BacktestResult]) -> pd.DataFrame:
+    """Hourly table of actuals and each model's day-ahead forecast (one row per forecast hour)."""
+    first = results[0]
+    horizon = first.day_ahead.shape[1]
+    times = pd.DatetimeIndex(
+        (first.day_ahead.index.values[:, None] + np.arange(horizon) * np.timedelta64(1, "h")).ravel(),
+        name="timestamp",
+    )
+    out = pd.DataFrame({"actual": first.actual_day_ahead.to_numpy().ravel()}, index=times)
+    for r in results:
+        out[r.name] = r.day_ahead.to_numpy().ravel()
+    return out
+
+
 def plot_reports(results: list[BacktestResult], series: pd.Series, out_dir) -> list[str]:
     """Save diagnostic PNGs; returns their paths."""
     import matplotlib

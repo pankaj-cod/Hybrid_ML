@@ -4,7 +4,8 @@
 
 Environment variables:
     PJME_MODEL_PATH    saved model bundle (default: artifacts/model.joblib)
-    PJME_HISTORY_PATH  optional CSV used by GET /forecast/latest (demo endpoint)
+    PJME_HISTORY_PATH  optional CSV used by GET /forecast/latest and the dashboard
+    PJME_REPORTS_DIR   evaluation reports read by the dashboard (default: artifacts/reports)
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .dashboard import router as dashboard_router
 from .data import DataValidationError, clean_series, load_series
 from .features import LOOKBACK
 from .pipeline import load_bundle
@@ -70,11 +72,13 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="PJME load forecast", version=__version__, lifespan=lifespan)
+app.include_router(dashboard_router)
 
 
 @app.get("/")
 def root() -> dict:
-    return {"service": "PJME hourly load forecast", "docs": "/docs", "health": "/health"}
+    return {"service": "PJME hourly load forecast", "dashboard": "/dashboard", "docs": "/docs",
+            "health": "/health"}
 
 
 @app.get("/health")

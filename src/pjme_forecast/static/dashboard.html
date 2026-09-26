@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PJME Load Forecast</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --wash: rgba(11, 11, 11, 0.05);
+  --good: #006300;
+  --bad: #d03b3b;
+  --bar-neutral: #c3c2b7;
+  --s-ensemble_bc: #2a78d6;
+  --s-hybrid: #eb6834;
+  --s-lightgbm: #1baf7a;
+  --s-ensemble: #eda100;
+  --s-hybrid_bc: #e87ba4;
+  --s-lightgbm_bc: #008300;
+  --s-linear: #4a3aa7;
+  --s-naive_24h: #e34948;
+  --s-naive_168h: #898781;
+  --s-actual: #0b0b0b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #ffffff; --text-secondary: #c3c2b7;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.06);
+    --good: #0ca30c; --bad: #e66767; --bar-neutral: #5a5955;
+    --s-ensemble_bc: #3987e5; --s-hybrid: #d95926; --s-lightgbm: #199e70; --s-ensemble: #c98500;
+    --s-hybrid_bc: #d55181; --s-lightgbm_bc: #008300; --s-linear: #9085e9; --s-naive_24h: #e66767;
+    --s-naive_168h: #898781; --s-actual: #ffffff;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #ffffff; --text-secondary: #c3c2b7;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10); --wash: rgba(255, 255, 255, 0.06);
+  --good: #0ca30c; --bad: #e66767; --bar-neutral: #5a5955;
+  --s-ensemble_bc: #3987e5; --s-hybrid: #d95926; --s-lightgbm: #199e70; --s-ensemble: #c98500;
+  --s-hybrid_bc: #d55181; --s-lightgbm_bc: #008300; --s-linear: #9085e9; --s-naive_24h: #e66767;
+  --s-naive_168h: #898781; --s-actual: #ffffff;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+h1 { font-size: 22px; margin: 0 0 4px; font-weight: 650; }
+h2 { font-size: 16px; margin: 0; font-weight: 600; }
+.sub { color: var(--text-secondary); margin: 0; }
+.muted { color: var(--text-muted); }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.card-head p { margin: 2px 0 0; color: var(--text-secondary); font-size: 13px; }
+.grid { display: grid; gap: 16px; }
+.kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 16px; }
+.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 860px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .two { grid-template-columns: 1fr; } }
+section { margin-top: 16px; }
+
+.kpi .label { color: var(--text-secondary); font-size: 13px; }
+.kpi .value { font-size: 28px; font-weight: 650; margin: 2px 0; }
+.kpi .note { font-size: 12.5px; color: var(--text-muted); }
+.delta-good { color: var(--good); font-weight: 600; }
+
+.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+button, select, input[type="date"] {
+  font: inherit; color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; cursor: pointer;
+}
+button:hover, select:hover { background: var(--wash); }
+button:focus-visible, select:focus-visible, input:focus-visible, .chip:focus-within { outline: 2px solid var(--s-hybrid); outline-offset: 1px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; cursor: pointer; user-select: none; }
+.chip input { margin: 0; accent-color: var(--text-secondary); }
+.key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; vertical-align: middle; }
+.key.dash { background: none !important; border-top: 2px dashed; height: 0; width: 20px; }
+.key.rect { height: 10px; width: 10px; border-radius: 2px; }
+.theme-toggle { white-space: nowrap; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--text-secondary); margin: 0 0 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart text { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart .axis-title { fill: var(--text-secondary); }
+.chart .direct { font-size: 11.5px; font-weight: 600; fill: var(--text-secondary); }
+.tooltip {
+  position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  min-width: 170px; opacity: 0; transition: opacity 80ms; z-index: 2;
+}
+.tooltip .t-head { color: var(--text-secondary); margin-bottom: 4px; }
+.tooltip .t-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.tooltip .t-row b { font-variant-numeric: tabular-nums; }
+.tooltip .t-name { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); }
+.loading { opacity: 0.45; transition: opacity 120ms; }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--text-secondary); font-weight: 600; }
+tr.hl td { font-weight: 650; }
+details { margin-top: 10px; }
+details summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+details .tablewrap { max-height: 260px; overflow: auto; margin-top: 6px; }
+.error { color: var(--bad); }
+.explorer { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 16px; }
+@media (max-width: 860px) { .explorer { grid-template-columns: 1fr; } }
+footer { margin-top: 24px; color: var(--text-muted); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>PJM East hourly load forecast</h1>
+      <p class="sub" id="subtitle">Loading model info…</p>
+    </div>
+    <button class="theme-toggle" id="theme" type="button" aria-label="Toggle color theme">◐ Theme</button>
+  </header>
+
+  <div class="grid kpis" id="kpis" aria-live="polite"></div>
+
+  <section class="card" aria-labelledby="exp-title">
+    <div class="card-head">
+      <div>
+        <h2 id="exp-title">Backtest explorer: pick any day in the test period</h2>
+        <p>Day-ahead forecasts issued at midnight, scored against what actually happened. Out-of-sample: these models never saw the test period. <b>BC</b> = bias correction: each model's average error by forecast hour, measured on 2015–16 validation, is subtracted.</p>
+      </div>
+    </div>
+    <div class="controls">
+      <button type="button" id="prev" aria-label="Previous day">‹</button>
+      <input type="date" id="day" aria-label="Day">
+      <button type="button" id="next" aria-label="Next day">›</button>
+      <button type="button" id="random">Random day</button>
+      <button type="button" id="worst">Hardest day</button>
+      <span id="model-chips" class="controls" style="margin:0"></span>
+    </div>
+    <div class="explorer">
+      <div>
+        <div class="legend" id="exp-legend"></div>
+        <div class="chart" id="exp-chart"></div>
+      </div>
+      <div>
+        <table id="exp-table" aria-label="Error for the selected day"></table>
+        <p class="muted" style="font-size:12.5px;margin-top:8px">Peak error = forecast daily peak − actual daily peak.</p>
+      </div>
+    </div>
+    <details><summary>Show hourly table</summary><div class="tablewrap" id="exp-raw"></div></details>
+  </section>
+
+  <div class="grid two">
+    <section class="card" aria-labelledby="cmp-title">
+      <div class="card-head">
+        <div><h2 id="cmp-title">Model comparison (test set)</h2><p>Lower is better.</p></div>
+        <select id="metric" aria-label="Metric">
+          <option value="day_ahead_MAE">Day-ahead MAE (MW)</option>
+          <option value="day_ahead_MAPE">Day-ahead MAPE (%)</option>
+          <option value="day_ahead_RMSE">Day-ahead RMSE (MW)</option>
+          <option value="1h_MAE">1-hour-ahead MAE (MW)</option>
+          <option value="1h_MAPE">1-hour-ahead MAPE (%)</option>
+        </select>
+      </div>
+      <div class="chart" id="cmp-chart"></div>
+      <details><summary>Show all metrics</summary><div class="tablewrap" id="cmp-table"></div></details>
+    </section>
+
+    <section class="card" aria-labelledby="hz-title">
+      <div class="card-head">
+        <div><h2 id="hz-title">Error by hours ahead</h2><p>Day-ahead MAE for each step of the 24 h forecast.</p></div>
+      </div>
+      <div class="legend" id="hz-legend"></div>
+      <div class="chart" id="hz-chart"></div>
+      <details><summary>Show table</summary><div class="tablewrap" id="hz-table"></div></details>
+    </section>
+  </div>
+
+  <section class="card" aria-labelledby="mo-title">
+    <div class="card-head">
+      <div><h2 id="mo-title">Error by month</h2><p>Day-ahead MAE per month of the test period. Peaks line up with summer heat and winter cold, which the model can't see (no weather data).</p></div>
+    </div>
+    <div class="legend" id="mo-legend"></div>
+    <div class="chart" id="mo-chart"></div>
+    <details><summary>Show table</summary><div class="tablewrap" id="mo-table"></div></details>
+  </section>
+
+  <section class="card" aria-labelledby="live-title">
+    <div class="card-head">
+      <div>
+        <h2 id="live-title">Live forecast from the production model</h2>
+        <p>Forecast after the last observation in the dataset (3 Aug 2018). The table lists the components the model returns.</p>
+      </div>
+      <select id="horizon" aria-label="Forecast horizon">
+        <option value="24">Next 24 hours</option>
+        <option value="48">Next 48 hours</option>
+        <option value="72">Next 72 hours</option>
+        <option value="168">Next 7 days</option>
+      </select>
+    </div>
+    <div class="legend" id="live-legend"></div>
+    <div class="chart" id="live-chart"></div>
+    <details><summary>Show forecast table</summary><div class="tablewrap" id="live-table"></div></details>
+  </section>
+
+  <footer id="footer">API docs at <a href="/docs">/docs</a>.</footer>
+</main>
+
+<script>
+"use strict";
+const LABELS = {
+  actual: "Actual", hybrid: "Hybrid", lightgbm: "LightGBM", ensemble: "Ensemble",
+  ensemble_bc: "Ensemble + BC", hybrid_bc: "Hybrid + BC", lightgbm_bc: "LightGBM + BC",
+  linear: "Linear", naive_24h: "Naive (yesterday)", naive_168h: "Naive (last week)",
+  observed: "Observed", forecast: "Forecast", base: "Seasonal base",
+};
+// Fixed order = fixed colour slot (validated palette order); a model keeps its colour when others are hidden.
+const MODEL_ORDER = ["ensemble_bc", "hybrid", "lightgbm", "ensemble", "hybrid_bc", "lightgbm_bc", "linear", "naive_24h", "naive_168h"];
+const DEFAULT_ON = new Set(["ensemble_bc", "hybrid", "lightgbm"]);
+const DESCRIPTIONS = {
+  ensemble_bc: "50/50 ensemble of LightGBM and the hybrid, with bias correction (BC) learned on validation",
+  ensemble: "50/50 ensemble of LightGBM and the hybrid",
+  hybrid: "seasonal base + LightGBM residual", hybrid_bc: "hybrid with bias correction",
+  lightgbm: "LightGBM on lag features", lightgbm_bc: "LightGBM with bias correction",
+};
+let PROD = "hybrid";
+const colorVar = (name) => `var(--s-${name})`;
+const fmt = (v, d = 0) => (v == null || Number.isNaN(v) ? "–" : v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }));
+const el = (tag, attrs = {}, text) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+};
+const svgEl = (tag, attrs = {}) => {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+};
+// Timestamps are naive local-clock strings; treat them as UTC so DST never shifts a label.
+const parseTs = (s) => { const [d, t = "00:00"] = s.split("T"); const [y, m, dd] = d.split("-").map(Number); const [hh, mm] = t.split(":").map(Number); return Date.UTC(y, m - 1, dd, hh, mm); };
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const pad = (n) => String(n).padStart(2, "0");
+const fmtHour = (ms) => `${pad(new Date(ms).getUTCHours())}:00`;
+const fmtDay = (ms) => { const d = new Date(ms); return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`; };
+const fmtDayHour = (ms) => `${fmtDay(ms)}, ${fmtHour(ms)}`;
+const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) { let msg = r.statusText; try { msg = (await r.json()).detail || msg; } catch (_) {} throw new Error(msg); }
+  return r.json();
+}
+
+function niceTicks(min, max, count = 5) {
+  const span = max - min || 1;
+  const step0 = span / count, mag = 10 ** Math.floor(Math.log10(step0));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= count) || 10 * mag;
+  const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+  const ticks = [];
+  for (let v = lo; v <= hi + step / 2; v += step) ticks.push(+v.toFixed(10));
+  return ticks;
+}
+
+function renderLegend(container, items) {
+  container.replaceChildren();
+  for (const it of items) {
+    const s = el("span");
+    const k = el("i", { class: `key${it.dash ? " dash" : ""}${it.rect ? " rect" : ""}` });
+    if (it.dash) k.style.borderTopColor = it.color; else k.style.background = it.color;
+    if (it.width && !it.dash) k.style.height = `${it.width}px`;
+    s.append(k, document.createTextNode(it.label));
+    container.append(s);
+  }
+}
+
+function renderTable(container, headers, rows, highlightFirstCol) {
+  const t = el("table");
+  const tr = el("tr");
+  headers.forEach((h) => tr.append(el("th", {}, h)));
+  const thead = el("thead"); thead.append(tr); t.append(thead);
+  const tb = el("tbody");
+  for (const r of rows) {
+    const row = el("tr", highlightFirstCol && r[0] === highlightFirstCol ? { class: "hl" } : {});
+    r.forEach((c) => row.append(el("td", {}, c)));
+    tb.append(row);
+  }
+  t.append(tb);
+  container.replaceChildren(t);
+}
+
+/**
+ * Line chart with a snapping crosshair + tooltip listing every series at that x.
+ * opts: { x: number[], xFormat, tipFormat, series: [{key,label,color,values,width,dash}], height, yTitle,
+ *         directLabels: bool, band: {from,to} (shaded x-range) }
+ */
+function lineChart(container, opts) {
+  const W = Math.max(container.clientWidth, 280), H = opts.height || 280;
+  const m = { top: 10, right: opts.directLabels ? 92 : 16, bottom: 28, left: 70 };
+  const iw = W - m.left - m.right, ih = H - m.top - m.bottom;
+  const xs = opts.x;
+  const all = opts.series.flatMap((s) => s.values.filter((v) => v != null));
+  if (!all.length) { container.replaceChildren(el("p", { class: "muted" }, "No data")); return; }
+  let yMin = Math.min(...all), yMax = Math.max(...all);
+  if (opts.zeroBased) yMin = Math.min(0, yMin);
+  const pad = (yMax - yMin) * 0.06; yMin -= opts.zeroBased ? 0 : pad; yMax += pad;
+  const yt = niceTicks(yMin, yMax, 5); yMin = yt[0]; yMax = yt[yt.length - 1];
+  const x0 = xs[0], x1 = xs[xs.length - 1];
+  const sx = (v) => m.left + (x1 === x0 ? iw / 2 : ((v - x0) / (x1 - x0)) * iw);
+  const sy = (v) => m.top + ih - ((v - yMin) / (yMax - yMin)) * ih;
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": opts.ariaLabel || "Line chart" });
+  if (opts.band) {
+    svg.append(svgEl("rect", { x: sx(opts.band.from), y: m.top, width: Math.max(0, sx(opts.band.to) - sx(opts.band.from)), height: ih, fill: "var(--wash)" }));
+  }
+  for (const t of yt) {
+    svg.append(svgEl("line", { x1: m.left, x2: m.left + iw, y1: sy(t), y2: sy(t), stroke: t === yMin ? "var(--axis)" : "var(--grid)", "stroke-width": 1 }));
+    const lab = svgEl("text", { x: m.left - 8, y: sy(t) + 4, "text-anchor": "end" }); lab.textContent = fmt(t); svg.append(lab);
+  }
+  if (opts.yTitle) {
+    const tt = svgEl("text", { x: 12, y: m.top + ih / 2, transform: `rotate(-90 12 ${m.top + ih / 2})`, "text-anchor": "middle", class: "axis-title" });
+    tt.textContent = opts.yTitle; svg.append(tt);
+  }
+  const xticks = opts.xTicks ? opts.xTicks(xs, iw) : xs.filter((_, i) => i % Math.ceil(xs.length / Math.max(2, Math.floor(iw / 80))) === 0);
+  for (const t of xticks) {
+    const lab = svgEl("text", { x: sx(t), y: H - 8, "text-anchor": "middle" }); lab.textContent = opts.xFormat(t); svg.append(lab);
+  }
+  const lastPoints = [];
+  for (const s of opts.series) {
+    let d = "", pen = false;
+    s.values.forEach((v, i) => {
+      if (v == null) { pen = false; return; }
+      d += `${pen ? "L" : "M"}${sx(xs[i]).toFixed(1)},${sy(v).toFixed(1)}`; pen = true;
+    });
+    svg.append(svgEl("path", { d, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round", "stroke-linecap": "round", ...(s.dash ? { "stroke-dasharray": "5 4" } : {}) }));
+    const li = s.values.map((v, i) => (v == null ? -1 : i)).filter((i) => i >= 0).pop();
+    if (li != null) lastPoints.push({ s, y: sy(s.values[li]), x: sx(xs[li]) });
+  }
+  if (opts.directLabels) {
+    lastPoints.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < lastPoints.length; i++) if (lastPoints[i].y - lastPoints[i - 1].y < 13) lastPoints[i].y = lastPoints[i - 1].y + 13;
+    for (const p of lastPoints) {
+      const t = svgEl("text", { x: m.left + iw + 6, y: p.y + 4, class: "direct" }); t.textContent = p.s.label; svg.append(t);
+    }
+  }
+  // Hover layer
+  const cross = svgEl("line", { y1: m.top, y2: m.top + ih, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" });
+  const dots = opts.series.map((s) => svgEl("circle", { r: 4, fill: s.color, stroke: "var(--surface-1)", "stroke-width": 2, visibility: "hidden" }));
+  svg.append(cross, ...dots);
+  const hit = svgEl("rect", { x: m.left, y: m.top, width: iw, height: ih, fill: "transparent", tabindex: 0 });
+  svg.append(hit);
+  const tip = el("div", { class: "tooltip", role: "status" });
+  container.replaceChildren(svg, tip);
+
+  let idx = -1;
+  const show = (i) => {
+    idx = Math.max(0, Math.min(xs.length - 1, i));
+    const cx = sx(xs[idx]);
+    cross.setAttribute("x1", cx); cross.setAttribute("x2", cx); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren(el("div", { class: "t-head" }, opts.tipFormat ? opts.tipFormat(xs[idx]) : opts.xFormat(xs[idx])));
+    opts.series.forEach((s, k) => {
+      const v = s.values[idx];
+      if (v == null) { dots[k].setAttribute("visibility", "hidden"); return; }
+      dots[k].setAttribute("cx", cx); dots[k].setAttribute("cy", sy(v)); dots[k].setAttribute("visibility", "visible");
+      const row = el("div", { class: "t-row" });
+      const name = el("span", { class: "t-name" });
+      const key = el("i", { class: `key${s.dash ? " dash" : ""}` });
+      if (s.dash) key.style.borderTopColor = s.color; else key.style.background = s.color;
+      name.append(key, document.createTextNode(s.label));
+      row.append(name, el("b", {}, `${fmt(v, opts.decimals || 0)}${opts.unit || ""}`));
+      tip.append(row);
+    });
+    const scale = container.clientWidth / W;
+    const left = cx * scale, tw = tip.offsetWidth || 180;
+    tip.style.left = `${left + 12 + tw > container.clientWidth ? left - tw - 12 : left + 12}px`;
+    tip.style.top = `${m.top}px`;
+    tip.style.opacity = 1;
+  };
+  const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach((d) => d.setAttribute("visibility", "hidden")); tip.style.opacity = 0; };
+  hit.addEventListener("pointermove", (e) => {
+    const r = svg.getBoundingClientRect();
+    const px = ((e.clientX - r.left) / r.width) * W;
+    const xv = x0 + ((px - m.left) / iw) * (x1 - x0);
+    let best = 0; for (let i = 1; i < xs.length; i++) if (Math.abs(xs[i] - xv) < Math.abs(xs[best] - xv)) best = i;
+    show(best);
+  });
+  hit.addEventListener("pointerleave", hide);
+  hit.addEventListener("focus", () => show(idx < 0 ? xs.length - 1 : idx));
+  hit.addEventListener("blur", hide);
+  hit.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") { show(idx + 1); e.preventDefault(); }
+    if (e.key === "ArrowLeft") { show(idx - 1); e.preventDefault(); }
+  });
+}
+
+/** Horizontal bar chart; `highlight` key gets its series color, the rest stay neutral. */
+function barChart(container, items, { unit = "", decimals = 0, highlight } = {}) {
+  const W = Math.max(container.clientWidth, 280), rowH = 34, m = { top: 4, right: 70, bottom: 4, left: 132 };
+  const H = m.top + m.bottom + items.length * rowH, iw = W - m.left - m.right;
+  const max = Math.max(...items.map((d) => d.value));
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": "Bar chart of model error" });
+  svg.append(svgEl("line", { x1: m.left, x2: m.left, y1: m.top, y2: H - m.bottom, stroke: "var(--axis)" }));
+  const tip = el("div", { class: "tooltip", role: "status" });
+  items.forEach((d, i) => {
+    const y = m.top + i * rowH, bh = 18, w = Math.max(2, (d.value / max) * iw);
+    const g = svgEl("g", { tabindex: 0 });
+    const hitR = svgEl("rect", { x: 0, y, width: W, height: rowH, fill: "transparent" });
+    const bar = svgEl("path", {
+      d: `M${m.left},${y + (rowH - bh) / 2} h${w - 4} a4,4 0 0 1 4,4 v${bh - 8} a4,4 0 0 1 -4,4 h${-(w - 4)} z`,
+      fill: d.key === highlight ? colorVar(d.key) : "var(--bar-neutral)",
+    });
+    const name = svgEl("text", { x: m.left - 8, y: y + rowH / 2 + 4, "text-anchor": "end", class: d.key === highlight ? "direct" : "" });
+    name.textContent = LABELS[d.key] || d.key;
+    const val = svgEl("text", { x: m.left + w + 6, y: y + rowH / 2 + 4, class: d.key === highlight ? "direct" : "" });
+    val.textContent = `${fmt(d.value, decimals)}${unit}`;
+    g.append(hitR, bar, name, val);
+    const on = () => {
+      bar.style.opacity = 0.8;
+      tip.replaceChildren(el("div", { class: "t-head" }, LABELS[d.key] || d.key), el("b", {}, `${fmt(d.value, decimals)}${unit}`));
+      tip.style.left = `${(m.left + w + 60) * (container.clientWidth / W)}px`; tip.style.top = `${y}px`; tip.style.opacity = 1;
+    };
+    const off = () => { bar.style.opacity = 1; tip.style.opacity = 0; };
+    g.addEventListener("pointerenter", on); g.addEventListener("pointerleave", off);
+    g.addEventListener("focus", on); g.addEventListener("blur", off);
+    svg.append(g);
+  });
+  container.replaceChildren(svg, tip);
+}
+
+// ---------------------------------------------------------------- state & views
+const state = { summary: null, day: null, dayData: null, shown: new Set(DEFAULT_ON), live: null };
+const renders = [];  // re-run on resize / theme change
+
+function renderKPIs(s) {
+  const m = s.metrics, h = m[PROD], g = m.lightgbm, orig = m.hybrid;
+  const imp = (a, b) => (100 * (b - a)) / b;
+  const tiles = [
+    ["Day-ahead accuracy", `${fmt(100 - h.day_ahead_MAPE, 1)}%`, `MAPE ${fmt(h.day_ahead_MAPE, 2)}% over ${fmt(h.n_day_ahead_origins)} test days`],
+    ["Day-ahead MAE", `${fmt(h.day_ahead_MAE)} MW`, null, imp(h.day_ahead_MAE, g.day_ahead_MAE)],
+    ["1-hour-ahead MAE", `${fmt(h["1h_MAE"])} MW`, null, imp(h["1h_MAE"], g["1h_MAE"])],
+    ["Day-ahead R²", fmt(h.day_ahead_R2, 3), PROD === "hybrid" ? `RMSE ${fmt(h.day_ahead_RMSE)} MW`
+      : `Hybrid alone: MAE ${fmt(orig.day_ahead_MAE)} MW, R² ${fmt(orig.day_ahead_R2, 3)}`],
+  ];
+  const box = document.getElementById("kpis"); box.replaceChildren();
+  for (const [label, value, note, delta] of tiles) {
+    const c = el("div", { class: "card kpi" });
+    c.append(el("div", { class: "label" }, label), el("div", { class: "value" }, value));
+    const n = el("div", { class: "note" });
+    if (delta != null) { n.append(el("span", { class: "delta-good" }, `${fmt(delta, 1)}% lower`), document.createTextNode(" than LightGBM alone")); }
+    else n.textContent = note;
+    c.append(n); box.append(c);
+  }
+}
+
+function renderChips() {
+  const box = document.getElementById("model-chips"); box.replaceChildren();
+  for (const k of MODEL_ORDER) {
+    const lab = el("label", { class: "chip" });
+    const cb = el("input", { type: "checkbox" }); cb.checked = state.shown.has(k);
+    cb.addEventListener("change", () => { cb.checked ? state.shown.add(k) : state.shown.delete(k); renderExplorer(); });
+    const key = el("i", { class: "key" }); key.style.background = colorVar(k);
+    lab.append(cb, key, document.createTextNode(LABELS[k]));
+    box.append(lab);
+  }
+}
+
+function renderExplorer() {
+  const d = state.dayData; if (!d) return;
+  const xs = d.timestamps.map(parseTs);
+  const models = MODEL_ORDER.filter((k) => state.shown.has(k) && d.series[k]);
+  const series = [{ key: "actual", label: "Actual", color: colorVar("actual"), values: d.series.actual, width: 2.5 },
+    ...models.map((k) => ({ key: k, label: LABELS[k], color: colorVar(k), values: d.series[k] }))];
+  renderLegend(document.getElementById("exp-legend"), series.map((s) => ({ label: s.label, color: s.color, width: s.width })));
+  lineChart(document.getElementById("exp-chart"), {
+    x: xs, series, xFormat: fmtHour, tipFormat: fmtDayHour, unit: " MW", yTitle: "MW", height: 300,
+    directLabels: series.length <= 4, ariaLabel: `Actual vs forecast load on ${d.day}`,
+    xTicks: (x) => x.filter((_, i) => i % 3 === 0),
+  });
+  const rows = MODEL_ORDER.filter((k) => d.metrics[k]).map((k) => [LABELS[k], fmt(d.metrics[k].MAE), `${fmt(d.metrics[k].MAPE, 2)}%`,
+    `${d.metrics[k].peak_error > 0 ? "+" : ""}${fmt(d.metrics[k].peak_error)}`]);
+  renderTable(document.getElementById("exp-table"), ["Model", "MAE (MW)", "MAPE", "Peak error"], rows, LABELS[PROD]);
+  renderTable(document.getElementById("exp-raw"), ["Hour", "Actual", ...MODEL_ORDER.filter((k) => d.series[k]).map((k) => LABELS[k])],
+    xs.map((x, i) => [fmtHour(x), fmt(d.series.actual[i]), ...MODEL_ORDER.filter((k) => d.series[k]).map((k) => fmt(d.series[k][i]))]));
+}
+
+async function loadDay(day) {
+  const chart = document.getElementById("exp-chart");
+  chart.classList.add("loading");
+  try {
+    state.dayData = await getJSON(`/api/backtest?day=${encodeURIComponent(day)}`);
+    state.day = state.dayData.day;
+    document.getElementById("day").value = state.day;
+    renderExplorer();
+  } catch (e) {
+    chart.replaceChildren(el("p", { class: "error" }, e.message));
+  } finally { chart.classList.remove("loading"); }
+}
+
+function renderComparison() {
+  const s = state.summary, metric = document.getElementById("metric").value;
+  const items = MODEL_ORDER.filter((k) => s.metrics[k]).map((k) => ({ key: k, value: s.metrics[k][metric] }))
+    .sort((a, b) => a.value - b.value);
+  const pct = metric.endsWith("MAPE");
+  barChart(document.getElementById("cmp-chart"), items, { unit: pct ? "%" : " MW", decimals: pct ? 2 : 0, highlight: PROD });
+  const cols = ["1h_MAE", "1h_MAPE", "day_ahead_MAE", "day_ahead_RMSE", "day_ahead_MAPE", "day_ahead_R2"];
+  renderTable(document.getElementById("cmp-table"), ["Model", "1h MAE", "1h MAPE %", "DA MAE", "DA RMSE", "DA MAPE %", "DA R²"],
+    MODEL_ORDER.filter((k) => s.metrics[k]).map((k) => [LABELS[k], ...cols.map((c) => fmt(s.metrics[k][c], c.includes("MAPE") ? 2 : c.includes("R2") ? 3 : 0))]), LABELS[PROD]);
+}
+
+function renderHorizon() {
+  const s = state.summary, keys = [...new Set([PROD, "hybrid", "lightgbm"])].filter((k) => s.mae_by_horizon[k]);
+  const xs = s.mae_by_horizon[keys[0]].map((_, i) => i + 1);
+  const series = keys.map((k) => ({ key: k, label: LABELS[k], color: colorVar(k), values: s.mae_by_horizon[k] }));
+  renderLegend(document.getElementById("hz-legend"), series.map((x) => ({ label: x.label, color: x.color })));
+  lineChart(document.getElementById("hz-chart"), {
+    x: xs, series, xFormat: (v) => `${v}h`, tipFormat: (v) => `${v} hour${v > 1 ? "s" : ""} ahead`, unit: " MW", yTitle: "MAE (MW)",
+    zeroBased: true, height: 260, xTicks: (x) => x.filter((v) => v === 1 || v % 4 === 0), ariaLabel: "MAE by forecast horizon",
+  });
+  renderTable(document.getElementById("hz-table"), ["Hours ahead", ...Object.keys(s.mae_by_horizon).map((k) => LABELS[k] || k)],
+    xs.map((x, i) => [String(x), ...Object.keys(s.mae_by_horizon).map((k) => fmt(s.mae_by_horizon[k][i]))]));
+}
+
+function renderMonthly() {
+  const s = state.summary, months = Object.keys(s.mae_by_month);
+  if (!months.length) { document.getElementById("mo-chart").replaceChildren(el("p", { class: "muted" }, "Re-run `pjme train` to populate monthly errors.")); return; }
+  const keys = [...new Set([PROD, "hybrid", "lightgbm"])].filter((k) => s.mae_by_month[months[0]][k] != null);
+  const xs = months.map((mo) => parseTs(`${mo}-01T00:00`));
+  const series = keys.map((k) => ({ key: k, label: LABELS[k], color: colorVar(k), values: months.map((mo) => s.mae_by_month[mo][k]) }));
+  renderLegend(document.getElementById("mo-legend"), series.map((x) => ({ label: x.label, color: x.color })));
+  const moFmt = (ms) => { const d = new Date(ms); return `${MONTHS[d.getUTCMonth()]} ${String(d.getUTCFullYear()).slice(2)}`; };
+  lineChart(document.getElementById("mo-chart"), {
+    x: xs, series, xFormat: moFmt, unit: " MW", yTitle: "MAE (MW)", zeroBased: true, height: 260, directLabels: true,
+    xTicks: (x) => x.filter((_, i) => i % 2 === 0), ariaLabel: "Day-ahead MAE by month",
+  });
+  renderTable(document.getElementById("mo-table"), ["Month", ...Object.keys(s.mae_by_month[months[0]]).map((k) => LABELS[k] || k)],
+    months.map((mo) => [mo, ...Object.values(s.mae_by_month[mo]).map((v) => fmt(v))]));
+}
+
+function renderLive() {
+  const d = state.live; if (!d) return;
+  const hx = d.history.timestamps.map(parseTs), fx = d.timestamps.map(parseTs);
+  const xs = [...hx, ...fx], nH = hx.length, nF = fx.length;
+  const hist = [...d.history.values, ...Array(nF).fill(null)];
+  // Join the forecast line to the last observation so the two read as one timeline.
+  const fc = [...Array(nH - 1).fill(null), d.history.values[nH - 1], ...d.forecast];
+  const series = [
+    { key: "observed", label: "Observed", color: colorVar("actual"), values: hist, width: 2 },
+    { key: "forecast", label: `${LABELS[PROD] || "Production"} forecast`, color: colorVar(PROD), values: fc, width: 2.5 },
+  ];
+  if (d.base) {
+    series.push({ key: "base", label: "Seasonal base", color: colorVar(PROD), values: [...Array(nH).fill(null), ...d.base], dash: true, width: 1.5 });
+  }
+  renderLegend(document.getElementById("live-legend"), series.map((s) => ({ label: s.label, color: s.color, dash: s.dash })));
+  lineChart(document.getElementById("live-chart"), {
+    x: xs, series, xFormat: (ms) => (new Date(ms).getUTCHours() === 0 ? fmtDay(ms) : fmtHour(ms)), tipFormat: fmtDayHour,
+    unit: " MW", yTitle: "MW", height: 300, band: { from: fx[0], to: fx[nF - 1] }, ariaLabel: "Observed load and forecast",
+    xTicks: (x) => x.filter((v) => new Date(v).getUTCHours() % (nF > 48 ? 24 : 12) === 0),
+  });
+  // Table: every numeric column the API returned (forecast, plus base/residual or member forecasts).
+  const cols = Object.keys(d).filter((k) => !["history", "timestamps"].includes(k) && Array.isArray(d[k]));
+  const nice = { forecast: "Forecast (MW)", base: "Seasonal base", residual: "Residual correction",
+                 forecast_lightgbm: "LightGBM member (before BC)", forecast_hybrid: "Hybrid member (before BC)" };
+  renderTable(document.getElementById("live-table"), ["Time", ...cols.map((c) => nice[c] || c)],
+    fx.map((x, i) => [fmtDayHour(x), ...cols.map((c) => fmt(d[c][i]))]));
+}
+
+async function loadLive() {
+  const chart = document.getElementById("live-chart");
+  chart.classList.add("loading");
+  try {
+    state.live = await getJSON(`/api/forecast?horizon=${document.getElementById("horizon").value}`);
+    renderLive();
+  } catch (e) { chart.replaceChildren(el("p", { class: "error" }, e.message)); }
+  finally { chart.classList.remove("loading"); }
+}
+
+function shiftDay(delta) {
+  const [lo, hi] = state.summary.backtest_days;
+  const next = isoDay(parseTs(`${state.day}T00:00`) + delta * 86400000);
+  if (next >= lo && next <= hi) loadDay(next);
+}
+
+async function hardestDay() {
+  const btn = document.getElementById("worst"); btn.disabled = true;
+  try {
+    const r = await getJSON("/api/backtest/daily");
+    const mae = r.mae[PROD];
+    let best = 0; for (let i = 1; i < mae.length; i++) if (mae[i] > mae[best]) best = i;
+    await loadDay(r.days[best]);
+  } catch (e) {
+    document.getElementById("exp-chart").replaceChildren(el("p", { class: "error" }, e.message));
+  } finally { btn.disabled = false; }
+}
+
+async function init() {
+  try {
+    state.summary = await getJSON("/api/summary");
+  } catch (e) {
+    document.getElementById("subtitle").replaceChildren(el("span", { class: "error" }, `Could not load dashboard data: ${e.message}`));
+    return;
+  }
+  const s = state.summary;
+  PROD = s.model_kind;
+  document.getElementById("subtitle").textContent =
+    `Production model: ${LABELS[PROD] || PROD} (${DESCRIPTIONS[PROD] || PROD}), trained on ${s.trained_on[0].slice(0, 10)} → ${s.trained_on[1].slice(0, 10)}. ` +
+    `Test period ${s.split.test[0].slice(0, 10)} → ${s.split.test[1].slice(0, 10)}.`;
+  renderKPIs(s); renderChips(); renderComparison(); renderHorizon(); renderMonthly();
+  const dayInput = document.getElementById("day");
+  dayInput.min = s.backtest_days[0]; dayInput.max = s.backtest_days[1];
+  dayInput.addEventListener("change", () => dayInput.value && loadDay(dayInput.value));
+  document.getElementById("prev").addEventListener("click", () => shiftDay(-1));
+  document.getElementById("next").addEventListener("click", () => shiftDay(1));
+  document.getElementById("random").addEventListener("click", () => {
+    const lo = parseTs(`${s.backtest_days[0]}T00:00`), hi = parseTs(`${s.backtest_days[1]}T00:00`);
+    loadDay(isoDay(lo + Math.floor(Math.random() * ((hi - lo) / 86400000 + 1)) * 86400000));
+  });
+  document.getElementById("worst").addEventListener("click", hardestDay);
+  document.getElementById("metric").addEventListener("change", renderComparison);
+  document.getElementById("horizon").addEventListener("change", loadLive);
+  renders.push(renderExplorer, renderComparison, renderHorizon, renderMonthly, renderLive);
+  await Promise.all([loadDay("2018-07-02"), loadLive()]);
+}
+
+// Theme toggle: stamps data-theme so it wins over the OS setting in both directions.
+(function theme() {
+  const root = document.documentElement;
+  try { const t = localStorage.getItem("pjme-theme"); if (t) root.dataset.theme = t; } catch (_) {}
+  document.getElementById("theme").addEventListener("click", () => {
+    const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    root.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("pjme-theme", root.dataset.theme); } catch (_) {}
+  });
+})();
+
+let resizeTimer;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => renders.forEach((f) => f()), 150); });
+init();
+</script>
+</body>
+</html>

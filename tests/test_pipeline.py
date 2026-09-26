@@ -33,9 +33,9 @@ def test_train_writes_artifacts(trained):
     art = root / "artifacts"
     assert (art / "model.joblib").exists()
     meta = json.loads((art / "model.json").read_text())
-    assert meta["model_kind"] == "hybrid"
+    assert meta["model_kind"] == "ensemble_bc"
     report = json.loads((art / "reports" / "metrics.json").read_text())
-    assert {"naive_24h", "lightgbm", "hybrid", "ensemble"} <= set(report["metrics"])
+    assert {"naive_24h", "lightgbm", "hybrid", "ensemble", "hybrid_bc", "ensemble_bc"} <= set(report["metrics"])
     for png in ("mae_by_horizon.png", "test_week.png", "mae_by_month.png"):
         assert (art / "reports" / png).stat().st_size > 0
 
@@ -87,3 +87,40 @@ def test_http_service(trained, monkeypatch):
         latest = client.get("/forecast/latest", params={"horizon": 6})
         assert latest.status_code == 200, latest.text
         assert len(latest.json()["forecast"]) == 6
+
+
+def test_dashboard_endpoints(trained, monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from pjme_forecast import dashboard, service
+
+    root, csv, _ = trained
+    monkeypatch.setenv("PJME_MODEL_PATH", str(root / "artifacts" / "model.joblib"))
+    monkeypatch.setenv("PJME_HISTORY_PATH", str(csv))
+    monkeypatch.setenv("PJME_REPORTS_DIR", str(root / "artifacts" / "reports"))
+    service.get_model.cache_clear()
+    service.get_demo_history.cache_clear()
+    dashboard.clear_caches()
+    with TestClient(service.app) as client:
+        page = client.get("/dashboard")
+        assert page.status_code == 200 and "lineChart" in page.text
+
+        s = client.get("/api/summary").json()
+        assert s["model_kind"] == "ensemble_bc" and s["mae_by_month"]
+        first_day = s["backtest_days"][0]
+
+        day = client.get("/api/backtest", params={"day": first_day}).json()
+        assert len(day["timestamps"]) == 24
+        assert {"actual", "hybrid", "lightgbm"} <= set(day["series"])
+        assert day["metrics"]["hybrid"]["MAE"] >= 0
+
+        assert client.get("/api/backtest", params={"day": "1999-01-01"}).status_code == 404
+        assert client.get("/api/backtest", params={"day": "not-a-date"}).status_code == 422
+
+        daily = client.get("/api/backtest/daily").json()
+        assert len(daily["days"]) == len(daily["mae"]["hybrid"]) > 0
+
+        live = client.get("/api/forecast", params={"horizon": 48}).json()
+        assert len(live["forecast"]) == 48 and len(live["forecast_hybrid"]) == 48  # ensemble returns member forecasts
+        assert len(live["history"]["values"]) == 72

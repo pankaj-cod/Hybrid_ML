@@ -8,6 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PJME_MODEL_PATH=/app/artifacts/model.joblib \
     PJME_HISTORY_PATH=/app/data/raw/PJME_hourly.csv \
+    PJME_REPORTS_DIR=/app/artifacts/reports \
     PORT=8000
 
 WORKDIR /app
@@ -20,6 +21,7 @@ COPY config ./config
 RUN pip install --no-cache-dir --no-deps .
 
 COPY artifacts/model.joblib artifacts/model.json ./artifacts/
+COPY artifacts/reports/metrics.json artifacts/reports/backtest_day_ahead.csv ./artifacts/reports/
 COPY data/raw/PJME_hourly.csv ./data/raw/
 
 RUN useradd --create-home appuser

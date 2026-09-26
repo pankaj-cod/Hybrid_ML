@@ -322,6 +322,86 @@ class EnsembleForecaster(Forecaster):
         }
 
 
+class BiasCorrected(Forecaster):
+    """Removes the repeatable error pattern of a recursive forecaster.
+
+    Recursive forecasts err in a consistent daily shape (e.g. too high in the evening ramp
+    for forecasts issued at midnight). ``table[o, h]`` is the mean of (forecast - actual) for
+    forecasts issued at hour ``o``, ``h + 1`` steps ahead, measured on data the inner model
+    was *not* trained on (see :func:`estimate_bias_table`). Steps beyond the table are left
+    uncorrected. ``refit`` refits the inner model and keeps the out-of-sample table.
+    """
+
+    def __init__(self, inner: Forecaster, table: np.ndarray | None = None, name: str | None = None):
+        self.inner = inner
+        self.table = None if table is None else np.asarray(table, dtype=float)
+        self.name = name or f"{inner.name}_bc"
+
+    def _offsets(self, origin_hours, horizon: int) -> np.ndarray:
+        if self.table is None:
+            raise RuntimeError(f"{self.name} has no bias table; call fit() first")
+        hours = np.asarray(origin_hours)
+        out = np.zeros((len(hours), horizon))
+        k = min(horizon, self.table.shape[1])
+        out[:, :k] = self.table[hours, :k]
+        return out
+
+    def fit(self, train, val=None):
+        if val is None or not len(val):
+            raise ValueError("BiasCorrected needs a validation series to estimate its table")
+        self.inner.fit(train, val)
+        self.table = estimate_bias_table(self.inner, train, val)
+        return self
+
+    def refit(self, series):
+        self.inner.refit(series)
+        return self
+
+    def predict_one_step(self, series, start):
+        pred = self.inner.predict_one_step(series, start)
+        return pred - self._offsets(pred.index.hour, 1)[:, 0]
+
+    def forecast_from_origins(self, series, origins, horizon):
+        origins = pd.DatetimeIndex(origins)
+        return self.inner.forecast_from_origins(series, origins, horizon) - self._offsets(origins.hour, horizon)
+
+    def forecast(self, history, horizon=24):
+        fc = self.inner.forecast(history, horizon)
+        offset = self._offsets([fc.index[0].hour], horizon)[0]
+        fc["forecast"] = fc["forecast"] - offset
+        if "residual" in fc:
+            fc["residual"] = fc["residual"] - offset
+        return fc
+
+    def describe(self):
+        return {
+            **super().describe(),
+            "inner": self.inner.describe(),
+            "bias_table_steps": None if self.table is None else int(self.table.shape[1]),
+            "mean_abs_offset_mw": None if self.table is None else float(np.abs(self.table).mean()),
+        }
+
+
+def estimate_bias_table(model: Forecaster, train: pd.Series, val: pd.Series, horizon: int = 24) -> np.ndarray:
+    """Mean (forecast - actual) by (origin hour, step) over every validation origin.
+
+    ``model`` must have been fitted without seeing ``val`` targets as training rows
+    (early stopping on ``val`` is fine), so the table is out-of-sample.
+    """
+    series = pd.concat([train, val])
+    idx = series.index
+    origins = idx[(idx >= val.index[0]) & (idx <= idx[-horizon])]
+    pred = model.forecast_from_origins(series, origins, horizon)
+    y = series.to_numpy(float)
+    pos = idx.get_indexer(origins)
+    err = pred - np.stack([y[p : p + horizon] for p in pos])
+    hours = origins.hour.to_numpy()
+    missing = sorted(set(range(24)) - set(hours))
+    if missing:
+        raise ValueError(f"Validation period has no origins at hours {missing}")
+    return np.stack([err[hours == h].mean(axis=0) for h in range(24)])
+
+
 # ---------------------------------------------------------------------- factory
 def build_model(kind: str, cfg: dict) -> Forecaster:
     """Create an unfitted model from the config. ``kind`` is one of MODEL_KINDS."""
@@ -341,11 +421,17 @@ def build_model(kind: str, cfg: dict) -> Forecaster:
             "hybrid", lgb_params=lgb_cfg, early_stopping_rounds=rounds, base=SeasonalBase(**base_cfg)
         )
     if kind == "ensemble":
-        return EnsembleForecaster("ensemble", [build_model("lightgbm", cfg), build_model("hybrid", cfg)])
+        w = float(cfg.get("ensemble", {}).get("weight_hybrid", 0.5))
+        return EnsembleForecaster(
+            "ensemble", [build_model("lightgbm", cfg), build_model("hybrid", cfg)], weights=[1 - w, w]
+        )
+    if kind.endswith("_bc") and kind[:-3] in ("lightgbm", "hybrid", "ensemble"):
+        return BiasCorrected(build_model(kind[:-3], cfg), name=kind)
     raise ValueError(f"Unknown model kind {kind!r}; expected one of {MODEL_KINDS}")
 
 
-MODEL_KINDS = ("naive_24h", "naive_168h", "linear", "lightgbm", "hybrid", "ensemble")
+MODEL_KINDS = ("naive_24h", "naive_168h", "linear", "lightgbm", "hybrid", "ensemble",
+               "lightgbm_bc", "hybrid_bc", "ensemble_bc")
 
 
 # ---------------------------------------------------------------------- helpers

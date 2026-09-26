@@ -31,8 +31,13 @@ base_model:
   ridge_alpha: 1.0
   include_trend: true
 
+ensemble:
+  weight_hybrid: 0.5             # ensemble = 0.5 * lightgbm + 0.5 * hybrid (flat optimum 0.4-0.6 on validation)
+
 # Model that is refit on the full history and saved for serving.
-production_model: hybrid
+# Options: lightgbm, hybrid, ensemble, and bias-corrected lightgbm_bc, hybrid_bc, ensemble_bc.
+# ensemble_bc was chosen on validation (2016 day-ahead MAE 1,109 vs 1,248 for hybrid).
+production_model: ensemble_bc
 
 output:
   artifacts_dir: artifacts

@@ -31,7 +31,8 @@ _DEFAULTS: dict[str, Any] = {
         "random_state": 42,
     },
     "base_model": {"fourier_order": 3, "ridge_alpha": 1.0, "include_trend": True},
-    "production_model": "hybrid",
+    "ensemble": {"weight_hybrid": 0.5},
+    "production_model": "ensemble_bc",
     "output": {"artifacts_dir": "artifacts"},
 }
 

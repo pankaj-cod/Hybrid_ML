@@ -10,18 +10,20 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
 
 from . import __version__
 from .data import load_clean_series, split_series
-from .evaluation import backtest, mae_by_horizon, plot_reports, summary_table
+from .evaluation import backtest, backtest_frame, mae_by_horizon, mae_by_month, plot_reports, summary_table
 from .features import LOOKBACK
-from .models import EnsembleForecaster, Forecaster, build_model
+from .models import BiasCorrected, EnsembleForecaster, Forecaster, build_model, estimate_bias_table
 
 log = logging.getLogger(__name__)
 
 CANDIDATES = ("naive_24h", "naive_168h", "linear", "lightgbm", "hybrid")
 BUNDLE_NAME = "model.joblib"
+BIAS_STEPS = 24  # bias tables cover the first 24 forecast steps
 
 
 def run_training(cfg: dict, save_production: bool = True) -> dict[str, Any]:
@@ -38,19 +40,32 @@ def run_training(cfg: dict, save_production: bool = True) -> dict[str, Any]:
     log.info("val   %s..%s (%d h)", val.index[0], val.index[-1], len(val))
     log.info("test  %s..%s (%d h)", test.index[0], test.index[-1], len(test))
 
-    # 1) Fit each candidate on train (early stopping on val), then refit on train+val
-    #    with the chosen tree count, and evaluate once on the untouched test period.
+    # 1) Fit each candidate on train (early stopping on val). For the LightGBM models, measure
+    #    their day-ahead error pattern on val *before* refitting (out-of-sample bias table).
+    #    Then refit on train+val with the chosen tree count and evaluate once on test.
     train_val = pd.concat([train, val])
     fitted: dict[str, Forecaster] = {}
+    tables: dict[str, np.ndarray] = {}
     results = []
     for kind in CANDIDATES:
         t0 = time.time()
-        model = build_model(kind, cfg).fit(train, val).refit(train_val)
-        fitted[kind] = model
+        model = build_model(kind, cfg).fit(train, val)
+        if kind in ("lightgbm", "hybrid"):
+            tables[kind] = estimate_bias_table(model, train, val, BIAS_STEPS)
+        fitted[kind] = model.refit(train_val)
         results.append(backtest(model, series, test_start, horizon, origin_hour))
         log.info("%-10s fitted + evaluated in %.0fs", kind, time.time() - t0)
-    fitted["ensemble"] = EnsembleForecaster("ensemble", [fitted["lightgbm"], fitted["hybrid"]])
-    results.append(backtest(fitted["ensemble"], series, test_start, horizon, origin_hour))
+
+    w = float(cfg["ensemble"]["weight_hybrid"])
+    fitted["ensemble"] = EnsembleForecaster("ensemble", [fitted["lightgbm"], fitted["hybrid"]], [1 - w, w])
+    fitted["lightgbm_bc"] = BiasCorrected(fitted["lightgbm"], tables["lightgbm"], "lightgbm_bc")
+    fitted["hybrid_bc"] = BiasCorrected(fitted["hybrid"], tables["hybrid"], "hybrid_bc")
+    # The ensemble is linear in its members, so its bias table is the same weighted average.
+    fitted["ensemble_bc"] = BiasCorrected(
+        fitted["ensemble"], (1 - w) * tables["lightgbm"] + w * tables["hybrid"], "ensemble_bc"
+    )
+    for kind in ("ensemble", "lightgbm_bc", "hybrid_bc", "ensemble_bc"):
+        results.append(backtest(fitted[kind], series, test_start, horizon, origin_hour))
 
     summary = summary_table(results)
     by_h = mae_by_horizon(results)
@@ -64,8 +79,14 @@ def run_training(cfg: dict, save_production: bool = True) -> dict[str, Any]:
         "horizon": horizon,
         "metrics": summary.to_dict(orient="index"),
         "mae_by_horizon": {k: v.round(2).tolist() for k, v in by_h.items()},
+        "mae_by_month": {
+            str(month): {k: round(float(v), 2) for k, v in row.items()}
+            for month, row in mae_by_month(results).iterrows()
+        },
     }
     (report_dir / "metrics.json").write_text(json.dumps(report, indent=2))
+    # Out-of-sample day-ahead predictions, used by the dashboard's backtest explorer.
+    backtest_frame(results).to_csv(report_dir / "backtest_day_ahead.csv", float_format="%.1f")
     (report_dir / "metrics.md").write_text(_markdown_report(summary, by_h, split_info))
     plot_reports(results, series, report_dir)
     log.info("\n%s", _console_table(summary))

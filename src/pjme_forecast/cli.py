@@ -1,4 +1,4 @@
-"""Command-line interface: ``pjme train`` and ``pjme forecast``."""
+"""Command-line interface: ``pjme train``, ``pjme forecast`` and ``pjme serve``."""
 from __future__ import annotations
 
 import argparse
@@ -45,6 +45,21 @@ def _forecast(args) -> int:
     return 0
 
 
+def _serve(args) -> int:
+    import os
+
+    import uvicorn
+
+    for name, value in (("PJME_MODEL_PATH", args.model), ("PJME_HISTORY_PATH", args.history),
+                        ("PJME_REPORTS_DIR", args.reports)):
+        if not Path(value).exists():
+            raise FileNotFoundError(f"{value} not found (run `pjme train` first?)")
+        os.environ[name] = str(value)
+    print(f"Dashboard: http://{args.host}:{args.port}/dashboard   API docs: http://{args.host}:{args.port}/docs")
+    uvicorn.run("pjme_forecast.service:app", host=args.host, port=args.port)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pjme", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -64,6 +79,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output", default=None, help="Write CSV here instead of printing")
     p.add_argument("--config", default=None)
     p.set_defaults(func=_forecast)
+
+    p = sub.add_parser("serve", help="Run the API and demo dashboard locally")
+    p.add_argument("--model", default="artifacts/model.joblib")
+    p.add_argument("--history", default="data/raw/PJME_hourly.csv")
+    p.add_argument("--reports", default="artifacts/reports")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.set_defaults(func=_serve)
 
     args = parser.parse_args(argv)
     logging.basicConfig(

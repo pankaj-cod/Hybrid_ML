@@ -5,7 +5,7 @@ import pytest
 from pjme_forecast.data import split_series
 from pjme_forecast.evaluation import backtest, metrics
 from pjme_forecast.features import LOOKBACK
-from pjme_forecast.models import EnsembleForecaster, build_model
+from pjme_forecast.models import BiasCorrected, EnsembleForecaster, SeasonalNaive, build_model, estimate_bias_table
 from pjme_forecast.pipeline import load_bundle, save_bundle
 
 VAL, TEST = "2016-03-15", "2016-04-20"
@@ -82,3 +82,42 @@ def test_save_load_roundtrip(fitted, series, tmp_path):
 def test_unfitted_model_raises(cfg, series):
     with pytest.raises(RuntimeError):
         build_model("hybrid", cfg).forecast(series, 24)
+
+
+class _KnownBias(SeasonalNaive):
+    """Perfect-foresight forecaster plus a planted error of 100 MW per step (+10 per origin hour)."""
+
+    name = "known_bias"
+
+    def forecast_from_origins(self, series, origins, horizon):
+        y = series.to_numpy(float)
+        pos = series.index.get_indexer(origins)
+        truth = np.stack([y[p : p + horizon] for p in pos])
+        return truth + 100.0 * np.arange(1, horizon + 1) + 10.0 * pd.DatetimeIndex(origins).hour.to_numpy()[:, None]
+
+
+def test_bias_table_recovers_planted_error(series):
+    tr, va, _ = split_series(series, VAL, TEST)
+    table = estimate_bias_table(_KnownBias(), tr, va, horizon=24)
+    assert table.shape == (24, 24)
+    expected = 100.0 * np.arange(1, 25)[None, :] + 10.0 * np.arange(24)[:, None]
+    np.testing.assert_allclose(table, expected)
+
+    corrected = BiasCorrected(_KnownBias(), table)
+    origins = series.index[[3000, 3013]]
+    out = corrected.forecast_from_origins(series, origins, 24)
+    truth = np.stack([series.to_numpy()[p : p + 24] for p in series.index.get_indexer(origins)])
+    np.testing.assert_allclose(out, truth)
+    # Steps beyond the table are left as-is rather than extrapolated.
+    long = corrected.forecast_from_origins(series, origins[:1], 30)
+    np.testing.assert_allclose(long[0, 24:], _KnownBias().forecast_from_origins(series, origins[:1], 30)[0, 24:])
+
+
+def test_bias_corrected_model_fit_and_forecast(fitted, series, cfg):
+    tr, va, _ = split_series(series, VAL, TEST)
+    m = build_model("hybrid_bc", cfg).fit(tr, va)
+    assert m.table.shape == (24, 24)
+    fc = m.forecast(series.iloc[-400:], 24)
+    np.testing.assert_allclose(fc["base"] + fc["residual"], fc["forecast"])
+    raw = m.inner.forecast(series.iloc[-400:], 24)
+    np.testing.assert_allclose(raw["forecast"] - fc["forecast"], m.table[fc.index[0].hour])
