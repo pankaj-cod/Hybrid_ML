@@ -10,7 +10,8 @@ of hourly load data. A **hybrid model** (a seasonal linear base with LightGBM le
 residual) is ensembled with a direct LightGBM model and bias-corrected. It's served as a
 FastAPI service with an interactive dashboard, tested, containerised, and CI-checked.
 
-**Live demo:** _add your Render URL here after deploying ([guide](docs/DEPLOY_RENDER.md))_ · `/dashboard` · `/docs`
+**Live demo:** [pjme-forecast-o84h.onrender.com/dashboard](https://pjme-forecast-o84h.onrender.com/dashboard) · [API docs](https://pjme-forecast-o84h.onrender.com/docs)  
+<sub>Free tier: the first visit after ~15 min idle takes 30–60 s to wake up.</sub>
 
 ![Dashboard](docs/images/dashboard.png)
 
@@ -34,8 +35,8 @@ never used for training, early stopping or tuning, and was scored once at the en
   recursively (each prediction feeds the next hour's inputs). This is how the model is used,
   so it's the headline metric. 1-hour-ahead scores are shown for reference only.
 - Production model: **96.2 % day-ahead accuracy (MAPE 3.77 %)**. It's 10 % more accurate than
-  LightGBM alone and 44 % more accurate than naive persistence. The median test day has 3.1 % error.
-- Remaining error is dominated by sudden weather changes (e.g. a heat wave ending overnight),
+  LightGBM alone and 46 % more accurate than naive persistence (by MAE). The median test day has 3.1 % error.
+- Remaining error is dominated by sudden weather changes (e.g. a heat wave ending overnight: load fell 31% in one day on 20 May 2017),
   which no load-only model can anticipate. See [Limitations](#limitations-and-next-steps).
 
 ---
@@ -172,8 +173,8 @@ Dockerfile, render.yaml, .github/workflows/ci.yml
 ## Limitations and next steps
 
 - **No weather data.** Temperature drives most of PJM load. Day-ahead error is largest at the
-  afternoon peak and in extreme summer/winter months. The hardest test day (20 May 2017, a heat
-  wave ending overnight) is missed by every model. **Adding temperature forecasts is the
+  afternoon peak and in extreme summer/winter months. The hardest test day (20 May 2017, most likely a
+  heat wave ending overnight) is missed by every model. **Adding temperature forecasts is the
   biggest improvement available.**
 - Point forecasts only. Quantile LightGBM would add prediction intervals.
 - The dataset ends in August 2018, so the "live" forecast is a demo. Send recent data to `POST /forecast` for real use.
